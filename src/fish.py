@@ -44,10 +44,12 @@ CONFIG = {
     "hidden_dim": 12,
     "output_dim": 2,           # turn and speed (both are outputs)
 
-    # Fitness weights
+    # Fitness weights - IMPROVED
     "wall_hit_penalty": 0.25,
-    "jerk_penalty": 0.002,     # penalty for violent turning
-    "alive_bonus": 1.0,        # base survival reward per second (built into survival time)
+    "jerk_penalty": 0.001,     # reduced - don't over-penalize evasion
+    "alive_bonus": 1.0,        # base survival reward per second
+    "speed_efficiency": 0.01,  # NEW: reward for using speed when close to predator
+    "speed_penalty": 0.005,    # NEW: small penalty for constant high speed
 }
 
 # =========================
@@ -140,6 +142,12 @@ class Fish:
     last_turn: float = 0.0
     pred_dist_accum: float = 0.0
     turn_effort: float = 0.0
+    
+    # NEW: track speed usage
+    speed_when_close: float = 0.0  # accumulated speed when predator is close
+    speed_when_far: float = 0.0    # accumulated speed when predator is far
+    close_time: float = 0.0
+    far_time: float = 0.0
 
 @dataclass
 class Predator:
@@ -261,7 +269,7 @@ class World:
             out = net.forward(inp)
 
             turn_cmd = float(out[0])  # -1 to 1
-            speed_cmd = (out[1])
+            speed_cmd = float(out[1])  # -1 to 1
 
             turn = turn_cmd * self.fish_turn_rate
             f.turn_effort += abs(turn) * dt
@@ -273,8 +281,27 @@ class World:
             f.jerk_accum += abs(turn - f.last_turn)
             f.last_turn = turn
 
-            speed_mul = 0.4 + (speed_cmd + 1.0) * 0.45  # map [-1,1] to [0.4,1.0]
+            # IMPROVED: Wider speed range (0.3 to 1.3)
+            speed_mul = 0.5 + (speed_cmd + 1.0) * 0.4  # map [-1,1] to [0.5,1.3]
             speed = self.fish_speed * speed_mul
+
+            # NEW: Track speed usage relative to predator distance
+            best_d = float("inf")
+            for p in self.preds:
+                d = math.hypot(p.x - f.x, p.y - f.y)
+                if d < best_d:
+                    best_d = d
+            
+            # Define "close" as within 150 pixels
+            danger_threshold = 150.0
+            if best_d < danger_threshold:
+                f.speed_when_close += speed_mul * dt
+                f.close_time += dt
+            else:
+                f.speed_when_far += speed_mul * dt
+                f.far_time += dt
+            
+            f.pred_dist_accum += best_d * dt
 
             # Move
             f.x += math.cos(f.heading) * speed * dt
@@ -284,13 +311,6 @@ class World:
             f.x, f.y, hit = self._push_inside_arena((f.x, f.y))
             if hit:
                 f.wall_hits += 1
-
-            best_d = float("inf")
-            for p in self.preds:
-                d = math.hypot(p.x - f.x, p.y - f.y)
-                if d < best_d:
-                    best_d = d
-            f.pred_dist_accum += best_d * dt
 
             # Survival time
             f.survival_time += dt
@@ -366,6 +386,18 @@ def compute_fitness(f: Fish, cfg: Dict) -> float:
     fitness -= cfg["jerk_penalty"] * f.jerk_accum
     fitness += 0.002 * f.pred_dist_accum
     fitness -= 0.05 * f.turn_effort
+    
+    # NEW: Reward strategic speed usage
+    # Reward high speed when close to predator
+    if f.close_time > 0:
+        avg_speed_close = f.speed_when_close / f.close_time
+        fitness += cfg["speed_efficiency"] * avg_speed_close * f.close_time
+    
+    # Penalize constant high speed when far from predator (energy conservation)
+    if f.far_time > 0:
+        avg_speed_far = f.speed_when_far / f.far_time
+        fitness -= cfg["speed_penalty"] * avg_speed_far * f.far_time
+    
     return float(fitness)
 
 def mutate(genome: np.ndarray, sigma: float) -> np.ndarray:
@@ -410,12 +442,20 @@ def draw_world(screen: pygame.Surface, world: World, gen: int, t_left: float, be
 
     # Arena
     pygame.draw.circle(screen, (60, 70, 90), (world.cx, world.cy), world.R, width=3)
+    
+    # Draw danger zone (150px radius around predators)
+    for p in world.preds:
+        pygame.draw.circle(screen, (80, 40, 40), (int(p.x), int(p.y)), 150, width=1)
 
-    # Fish
+    # Fish - color by speed
     for f in world.fish:
         if not f.alive:
             continue
-        pygame.draw.circle(screen, (180, 220, 255), (int(f.x), int(f.y)), 4)
+        
+        # Calculate approximate speed for coloring
+        # Fish that move more get brighter
+        brightness = 180 + int(20 * (f.survival_time / 10))  # subtle brightness increase
+        pygame.draw.circle(screen, (brightness, 220, 255), (int(f.x), int(f.y)), 4)
 
         # tiny heading line
         hx = f.x + math.cos(f.heading) * 10
@@ -437,7 +477,7 @@ def draw_world(screen: pygame.Surface, world: World, gen: int, t_left: float, be
         f"Mode: {mode}   (SPACE: toggle train/replay)   (R: reset replay)   (ESC: quit)",
         f"Gen: {gen}   Alive: {alive}/{len(world.fish)}   Time left: {t_left:5.1f}s",
         f"BestFit: {best_fit:8.2f}   AvgFit: {avg_fit:8.2f}",
-        f"Tip: If learning stalls, lower predator_speed or increase mutation_sigma slightly.",
+        f"Red circle = danger zone. Fish should speed up inside it!",
     ]
     y = 12
     for ln in lines:
