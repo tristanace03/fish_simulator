@@ -138,6 +138,8 @@ class Fish:
     wall_hits: int = 0
     jerk_accum: float = 0.0
     last_turn: float = 0.0
+    pred_dist_accum: float = 0.0
+    turn_effort: float = 0.0
 
 @dataclass
 class Predator:
@@ -258,6 +260,7 @@ class World:
             # Policy output: turn in [-1,1] scaled by fish_turn_rate
             out = net.forward(inp)[0]
             turn = float(out) * self.fish_turn_rate
+            f.turn_effort += abs(turn) * dt
 
             # Apply turn with dt
             applied_turn = turn * dt
@@ -275,6 +278,13 @@ class World:
             f.x, f.y, hit = self._push_inside_arena((f.x, f.y))
             if hit:
                 f.wall_hits += 1
+
+            best_d = float("inf")
+            for p in self.preds:
+                d = math.hypot(p.x - f.x, p.y - f.y)
+                if d < best_d:
+                    best_d = d
+            f.pred_dist_accum += best_d * dt
 
             # Survival time
             f.survival_time += dt
@@ -348,6 +358,8 @@ def compute_fitness(f: Fish, cfg: Dict) -> float:
     fitness = f.survival_time * cfg["alive_bonus"]
     fitness -= cfg["wall_hit_penalty"] * f.wall_hits
     fitness -= cfg["jerk_penalty"] * f.jerk_accum
+    fitness += 0.002 * f.pred_dist_accum
+    fitness -= 0.02 * f.turn_effort
     return float(fitness)
 
 def mutate(genome: np.ndarray, sigma: float) -> np.ndarray:
