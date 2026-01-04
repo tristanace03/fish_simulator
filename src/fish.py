@@ -8,9 +8,6 @@ from typing import List, Tuple, Optional, Dict
 import numpy as np
 import pygame
 
-# =========================
-# Config (tweak these later)
-# =========================
 CONFIG = {
     "window_w": 1000,
     "window_h": 800,
@@ -44,17 +41,16 @@ CONFIG = {
     "hidden_dim": 12,
     "output_dim": 2,           # turn and speed (both are outputs)
 
-    # Fitness weights - IMPROVED
+    # Fitness weights
     "wall_hit_penalty": 0.25,
-    "jerk_penalty": 0.001,     # reduced - don't over-penalize evasion
-    "alive_bonus": 1.0,        # base survival reward per second
-    "speed_efficiency": 0.01,  # NEW: reward for using speed when close to predator
-    "speed_penalty": 0.005,    # NEW: small penalty for constant high speed
+    "jerk_penalty": 0.001,     
+    "alive_bonus": 1.0,        
+    "speed_efficiency": 0.01,  
+    "speed_penalty": 0.005,    
 }
 
-# =========================
 # Utility math
-# =========================
+
 def clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
 
@@ -78,9 +74,7 @@ def wrap_angle(a: float) -> float:
         a += 2 * math.pi
     return a
 
-# =========================
-# Simple Neural Net (evolved weights)
-# =========================
+# Simple Neural Net 
 class TinyNet:
     """
     Feedforward net: input -> hidden(tanh) -> output(tanh)
@@ -125,9 +119,8 @@ class TinyNet:
     def copy(self) -> "TinyNet":
         return TinyNet(self.input_dim, self.hidden_dim, self.output_dim, genome=self.genome.copy())
 
-# =========================
 # Entities
-# =========================
+
 @dataclass
 class Fish:
     x: float
@@ -143,9 +136,8 @@ class Fish:
     pred_dist_accum: float = 0.0
     turn_effort: float = 0.0
     
-    # NEW: track speed usage
-    speed_when_close: float = 0.0  # accumulated speed when predator is close
-    speed_when_far: float = 0.0    # accumulated speed when predator is far
+    speed_when_close: float = 0.0  
+    speed_when_far: float = 0.0    
     close_time: float = 0.0
     far_time: float = 0.0
 
@@ -155,9 +147,8 @@ class Predator:
     y: float
     heading: float
 
-# =========================
-# World / Simulation
-# =========================
+# Simulation
+
 class World:
     def __init__(self, cfg: Dict):
         self.cfg = cfg
@@ -165,7 +156,6 @@ class World:
         self.cy = cfg["window_h"] // 2
         self.R = cfg["arena_radius"]
 
-        # Keep some margin; arena circle is centered.
         self.fish_speed = cfg["fish_speed"]
         self.pred_speed = cfg["predator_speed"]
         self.fish_turn_rate = cfg["fish_turn_rate"]
@@ -281,11 +271,9 @@ class World:
             f.jerk_accum += abs(turn - f.last_turn)
             f.last_turn = turn
 
-            # IMPROVED: Wider speed range (0.3 to 1.3)
             speed_mul = 0.5 + (speed_cmd + 1.0) * 0.4  # map [-1,1] to [0.5,1.3]
             speed = self.fish_speed * speed_mul
 
-            # NEW: Track speed usage relative to predator distance
             best_d = float("inf")
             for p in self.preds:
                 d = math.hypot(p.x - f.x, p.y - f.y)
@@ -376,18 +364,15 @@ class World:
 
         return inp
 
-# =========================
 # Evolution
-# =========================
+
 def compute_fitness(f: Fish, cfg: Dict) -> float:
-    # survival_time is already in seconds
     fitness = f.survival_time * cfg["alive_bonus"]
     fitness -= cfg["wall_hit_penalty"] * f.wall_hits
     fitness -= cfg["jerk_penalty"] * f.jerk_accum
     fitness += 0.002 * f.pred_dist_accum
     fitness -= 0.05 * f.turn_effort
     
-    # NEW: Reward strategic speed usage
     # Reward high speed when close to predator
     if f.close_time > 0:
         avg_speed_close = f.speed_when_close / f.close_time
@@ -434,9 +419,7 @@ def load_best(path: str) -> Tuple[Dict, TinyNet]:
     )
     return payload, net
 
-# =========================
 # Rendering
-# =========================
 def draw_world(screen: pygame.Surface, world: World, gen: int, t_left: float, best_fit: float, avg_fit: float, mode: str) -> None:
     screen.fill((16, 18, 24))
 
@@ -462,7 +445,7 @@ def draw_world(screen: pygame.Surface, world: World, gen: int, t_left: float, be
         hy = f.y + math.sin(f.heading) * 10
         pygame.draw.line(screen, (120, 160, 200), (int(f.x), int(f.y)), (int(hx), int(hy)), width=2)
 
-    # Predator(s)
+    # Predator
     for p in world.preds:
         pygame.draw.circle(screen, (255, 90, 90), (int(p.x), int(p.y)), 10)
         hx = p.x + math.cos(p.heading) * 18
@@ -485,9 +468,7 @@ def draw_world(screen: pygame.Surface, world: World, gen: int, t_left: float, be
         screen.blit(surf, (12, y))
         y += 22
 
-# =========================
 # Main loop
-# =========================
 def run_training(cfg: Dict) -> None:
     pygame.init()
     screen = pygame.display.set_mode((cfg["window_w"], cfg["window_h"]))
