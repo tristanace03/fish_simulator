@@ -1,7 +1,6 @@
 # Fish Simulator: Neuroevolution Survival Game
 
-A Python-based simulation demonstrating neuroevolution, where schools of fish learn to survive predators through artificial neural networks. Watch as fish evolve intelligent evasion strategies over generations!
-
+A Python-based simulation demonstrating neuroevolution, where schools of fish learn to survive predators through artificial neural networks. 
 
 ## Features
 
