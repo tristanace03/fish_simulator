@@ -36,6 +36,10 @@ CONFIG = {
     "mutation_sigma": 0.10,    # noise added to weights
     "mutation_rate": 1.00,     # probability each child gets mutated (keep 1.0 initially)
 
+    # Obstacles
+    "obstacle_count": 3,
+    "obstacle_radius": 20.0,
+
     # Network architecture
     "input_dim": 8,
     "hidden_dim": 12,
@@ -149,6 +153,11 @@ class Predator:
 
 # Simulation
 
+class Obstacle:
+    x: float
+    y: float
+    radius: float
+
 class World:
     def __init__(self, cfg: Dict):
         self.cfg = cfg
@@ -165,6 +174,9 @@ class World:
         self.fish: List[Fish] = []
         self.preds: List[Predator] = []
 
+        self.obstacles: List[Obstacle] = []
+        self.obstacle_radius = cfg["obstacle_radius"]
+
     def reset(self, fish_nets: List[TinyNet], seed: Optional[int] = None) -> None:
         if seed is not None:
             random.seed(seed)
@@ -172,6 +184,12 @@ class World:
 
         self.fish.clear()
         self.preds.clear()
+
+        # Spawn obstacles
+        self.obstacles.clear()
+        for _ in range(self.cfg["obstacle_count"]):
+            x, y = self._rand_point_in_circle(self.cx, self.cy, self.R * 0.8)
+            self.obstacles.append(Obstacle(x=x, y=y, radius=self.obstacle_radius))
 
         # Spawn fish randomly inside circle
         for _ in fish_nets:
@@ -184,6 +202,23 @@ class World:
             x, y = self._rand_point_in_circle(self.cx, self.cy, self.R * 0.3)
             heading = random.uniform(-math.pi, math.pi)
             self.preds.append(Predator(x=x, y=y, heading=heading))
+
+    def _push_inside_obstacles(self, entity_xy: Tuple[float, float]) -> Tuple[float, float, bool]:
+        x, y = entity_xy
+        pushed = False
+        for obs in self.obstacles:
+            dx = x - obs.x
+            dy = y - obs.y
+            dist = math.sqrt(dx * dx + dy * dy)
+            min_dist = obs.radius + 1.0  # small buffer
+            if dist < min_dist:
+                # Push out
+                if dist > 0:
+                    nx, ny = dx / dist, dy / dist
+                    x = obs.x + nx * obs.radius
+                    y = obs.y + ny * obs.radius
+                return x, y, True
+        return x, y, False
 
     def _rand_point_in_circle(self, cx: float, cy: float, radius: float) -> Tuple[float, float]:
         # Rejection sampling
@@ -300,6 +335,8 @@ class World:
             if hit:
                 f.wall_hits += 1
 
+            f.x, f.y, obs_hit = self._push_inside_obstacles((f.x, f.y))
+
             # Survival time
             f.survival_time += dt
 
@@ -353,6 +390,21 @@ class World:
         dist_center = vec_len(dx0, dy0)
         dist_wall = clamp((self.R - dist_center) / self.R, 0.0, 1.0)
 
+        best_obs_d = 1e18
+        best_obs_ang = 0.0
+        for obs in self.obstacles:
+            dx = obs.x - f.x
+            dy = obs.y - f.y
+            d = vec_len(dx, dy)
+            if d < best_obs_d:
+                best_obs_d = d
+                best_obs_ang = angle_of(dx, dy)
+
+        dist_obs = clamp(best_obs_d / (self.R * 0.5), 0.0, 1.0)
+        rel_obs = wrap_angle(best_obs_ang - f.heading)
+        s_obs = math.sin(rel_obs)
+        c_obs = math.cos(rel_obs)
+
         inp = np.array([
             vx, vy,
             dist_pred,
@@ -360,6 +412,9 @@ class World:
             dist_wall,
             math.sin(f.heading),
             math.cos(f.heading),
+            dist_obs,
+            s_obs, 
+            c_obs,
         ], dtype=np.float32)
 
         return inp
@@ -430,6 +485,8 @@ def draw_world(screen: pygame.Surface, world: World, gen: int, t_left: float, be
     for p in world.preds:
         pygame.draw.circle(screen, (80, 40, 40), (int(p.x), int(p.y)), 150, width=1)
 
+    for obs in world.obstacles:
+        pygame.draw.circle(screen, (100, 100, 100), (int(obs.x), int(obs.y)), int(obs.radius))
     # Fish - color by speed
     for f in world.fish:
         if not f.alive:
