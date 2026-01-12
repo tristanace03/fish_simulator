@@ -41,7 +41,7 @@ CONFIG = {
     "obstacle_radius": 20.0,
 
     # Network architecture
-    "input_dim": 8,
+    "input_dim": 10,
     "hidden_dim": 12,
     "output_dim": 2,           # turn and speed (both are outputs)
 
@@ -151,12 +151,13 @@ class Predator:
     y: float
     heading: float
 
-# Simulation
-
+@dataclass
 class Obstacle:
     x: float
     y: float
     radius: float
+
+# Simulation
 
 class World:
     def __init__(self, cfg: Dict):
